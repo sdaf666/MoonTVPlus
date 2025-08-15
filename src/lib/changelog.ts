@@ -11,6 +11,19 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: "2.4.1",
+    date: "2025-08-15",
+    added: [
+      // 无新增内容
+    ],
+    changed: [
+      // 无变更内容
+    ],
+    fixed: [
+    "对导入和 db 读取的配置文件做自检，防止 USERNAME 修改导致用户状态异常"
+    ]
+  },
+  {
     version: "2.4.0",
     date: "2025-08-15",
     added: [
