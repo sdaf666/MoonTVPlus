@@ -48,7 +48,7 @@ import {
 import { getDoubanDetail } from '@/lib/douban.client';
 import { getTMDBImageUrl } from '@/lib/tmdb.search';
 import { DanmakuFilterConfig, EpisodeFilterConfig,SearchResult } from '@/lib/types';
-import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
+import { base58Decode, getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
 import { useEnableComments } from '@/hooks/useEnableComments';
 import { usePlaySync } from '@/hooks/usePlaySync';
 
@@ -488,6 +488,7 @@ function PlayPageClient() {
   const [currentSource, setCurrentSource] = useState(searchParams.get('source') || '');
   const [currentId, setCurrentId] = useState(searchParams.get('id') || '');
   const [fileName] = useState(searchParams.get('fileName') || ''); // 小雅源：用户点击的文件名
+  const isDirectPlay = currentSource === 'directplay';
 
   // 解析 source 参数以获取 embyKey（仅用于 API 调用）
   const parseSourceForApi = (source: string): { source: string; embyKey?: string } => {
@@ -598,6 +599,10 @@ function PlayPageClient() {
   useEffect(() => {
     // 等待初始化完成（播放记录恢复完成）
     if (loading) {
+      return;
+    }
+
+    if (isDirectPlay) {
       return;
     }
 
@@ -938,11 +943,19 @@ function PlayPageClient() {
     };
 
     loadDanmakuForCurrentEpisode();
-  }, [currentEpisodeIndex, videoTitle, loading]);
+  }, [currentEpisodeIndex, videoTitle, loading, isDirectPlay]);
 
   // 获取豆瓣评分数据
   useEffect(() => {
     const fetchDoubanRating = async () => {
+      if (isDirectPlay) {
+        setDoubanRating(null);
+        setDoubanCardSubtitle('');
+        setDoubanAka([]);
+        setDoubanYear('');
+        return;
+      }
+
       if (!videoDoubanId || videoDoubanId === 0) {
         setDoubanRating(null);
         setDoubanCardSubtitle('');
@@ -994,11 +1007,16 @@ function PlayPageClient() {
     };
 
     fetchDoubanRating();
-  }, [videoDoubanId]);
+  }, [videoDoubanId, isDirectPlay]);
 
   // 获取TMDB背景图
   useEffect(() => {
     const fetchTMDBBackdrop = async () => {
+      if (isDirectPlay) {
+        setTmdbBackdrop(null);
+        return;
+      }
+
       // 检查是否禁用背景图
       if (typeof window !== 'undefined') {
         const disabled = localStorage.getItem('tmdb_backdrop_disabled');
@@ -1146,7 +1164,7 @@ function PlayPageClient() {
     };
 
     fetchTMDBBackdrop();
-  }, [videoTitle, videoDoubanId]);
+  }, [videoTitle, videoDoubanId, isDirectPlay]);
 
 
   // 视频播放地址
@@ -1168,6 +1186,14 @@ function PlayPageClient() {
 
   // 总集数
   const totalEpisodes = detail?.episodes?.length || 0;
+  const directEpisodeLabel = detail?.episodes_titles?.[currentEpisodeIndex] || '直链';
+  const shouldShowEpisodeLabel = totalEpisodes > 1 || isDirectPlay;
+  const episodeLabel = isDirectPlay
+    ? directEpisodeLabel
+    : detail?.episodes_titles?.[currentEpisodeIndex] || `第 ${currentEpisodeIndex + 1} 集`;
+  const playerEpisodeLabel = isDirectPlay
+    ? directEpisodeLabel
+    : `第${currentEpisodeIndex + 1}集`;
 
   // 用于记录是否需要在播放器 ready 后跳转到指定进度
   const resumeTimeRef = useRef<number | null>(null);
@@ -2808,6 +2834,73 @@ function PlayPageClient() {
     };
 
     const initAll = async () => {
+      if (currentSource === 'directplay') {
+        if (!currentId) {
+          setError('缺少直链地址');
+          setLoading(false);
+          return;
+        }
+
+        setLoading(true);
+        setLoadingStage('fetching');
+        setLoadingMessage('🎬 正在准备直链播放...');
+
+        let directUrl = '';
+        try {
+          directUrl = base58Decode(currentId);
+        } catch (decodeError) {
+          console.error('直链地址解析失败:', decodeError);
+          setError('直链地址解析失败');
+          setLoading(false);
+          return;
+        }
+
+        const directDetail: SearchResult = {
+          id: currentId,
+          title: '直链播放',
+          poster: '',
+          episodes: [directUrl],
+          episodes_titles: ['直链'],
+          source: 'directplay',
+          source_name: '直链',
+          class: '',
+          year: '',
+          desc: '',
+          type_name: '',
+          douban_id: 0,
+        };
+
+        setNeedPrefer(false);
+        setCurrentSource('directplay');
+        setCurrentId(currentId);
+        setVideoTitle('直链播放');
+        setVideoYear('');
+        setVideoCover('');
+        setVideoDoubanId(0);
+        setCorrectedDesc('');
+        setDetail(directDetail);
+        setSourceProxyMode(false);
+        setAvailableSources([directDetail]);
+        setCurrentEpisodeIndex(0);
+        setSourceSearchError(null);
+        setSourceSearchLoading(false);
+        setBackgroundSourcesLoading(false);
+
+        const newUrl = new URL(window.location.href);
+        newUrl.searchParams.set('source', 'directplay');
+        newUrl.searchParams.set('id', currentId);
+        newUrl.searchParams.delete('prefer');
+        newUrl.searchParams.delete('fileName');
+        window.history.replaceState({}, '', newUrl.toString());
+
+        setLoadingStage('ready');
+        setLoadingMessage('✨ 准备就绪，即将开始播放...');
+        setTimeout(() => {
+          setLoading(false);
+        }, 500);
+        return;
+      }
+
       if (!currentSource && !currentId && !videoTitle && !searchTitle) {
         setError('缺少必要参数');
         setLoading(false);
@@ -3698,6 +3791,7 @@ function PlayPageClient() {
   // 预加载下一集弹幕（完全复制 loadDanmakuForCurrentEpisode 的逻辑）
   const preloadNextEpisodeDanmaku = async () => {
     try {
+      if (isDirectPlay) return;
       const disableAutoLoad = localStorage.getItem('disableAutoLoadDanmaku') === 'true';
       if (disableAutoLoad) return;
 
@@ -4043,6 +4137,7 @@ function PlayPageClient() {
 
   // 自动搜索并加载弹幕
   const autoSearchDanmaku = async () => {
+    if (isDirectPlay) return;
     const disableAutoLoad = localStorage.getItem('disableAutoLoadDanmaku') === 'true';
     if (disableAutoLoad) return;
 
@@ -4616,9 +4711,7 @@ function PlayPageClient() {
     // 非WebKit浏览器且播放器已存在，使用switch方法切换
     if (!isWebkit && artPlayerRef.current) {
       artPlayerRef.current.switch = videoUrl;
-      artPlayerRef.current.title = `${videoTitle} - 第${
-        currentEpisodeIndex + 1
-      }集`;
+      artPlayerRef.current.title = `${videoTitle} - ${playerEpisodeLabel}`;
       artPlayerRef.current.poster = videoCover;
       if (artPlayerRef.current?.video) {
         ensureVideoSource(
@@ -6993,12 +7086,9 @@ function PlayPageClient() {
           <h1 className={`text-xl font-semibold flex items-center gap-2 flex-wrap ${tmdbBackdrop ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}>
             <span>
               {videoTitle || '影片标题'}
-              {totalEpisodes > 1 && (
+              {shouldShowEpisodeLabel && (
                 <span className={tmdbBackdrop ? 'text-white opacity-80' : 'text-gray-500 dark:text-gray-400'}>
-                  {` > ${
-                    detail?.episodes_titles?.[currentEpisodeIndex] ||
-                    `第 ${currentEpisodeIndex + 1} 集`
-                  }`}
+                  {` > ${episodeLabel}`}
                 </span>
               )}
             </span>
@@ -7568,254 +7658,258 @@ function PlayPageClient() {
           </div>
         </div>
 
-        {/* 详情展示 */}
-        <div className='grid grid-cols-1 md:grid-cols-5 lg:grid-cols-6 gap-4'>
-          {/* 文字区 */}
-          <div className='md:col-span-4 lg:col-span-5'>
-            <div className='p-6 flex flex-col min-h-0'>
-              {/* 标题 */}
-              <h1 className={`text-3xl font-bold mb-2 tracking-wide flex items-center flex-shrink-0 text-center md:text-left w-full flex-wrap gap-2 ${tmdbBackdrop ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}>
-                <span className={doubanAka.length > 0 ? 'relative group cursor-help' : ''}>
-                  {videoTitle || '影片标题'}
-                  {/* aka 悬浮提示 */}
-                  {doubanAka.length > 0 && (
-                    <div className='absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-800 dark:bg-gray-900 text-white text-sm rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 ease-out whitespace-nowrap z-[100] pointer-events-none'>
-                      <div className='font-semibold text-xs text-gray-400 mb-1'>又名：</div>
-                      {doubanAka.map((name, index) => (
-                        <div key={index} className='text-sm'>
-                          {name}
+        {!isDirectPlay && (
+          <>
+            {/* 详情展示 */}
+            <div className='grid grid-cols-1 md:grid-cols-5 lg:grid-cols-6 gap-4'>
+              {/* 文字区 */}
+              <div className='md:col-span-4 lg:col-span-5'>
+                <div className='p-6 flex flex-col min-h-0'>
+                  {/* 标题 */}
+                  <h1 className={`text-3xl font-bold mb-2 tracking-wide flex items-center flex-shrink-0 text-center md:text-left w-full flex-wrap gap-2 ${tmdbBackdrop ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}>
+                    <span className={doubanAka.length > 0 ? 'relative group cursor-help' : ''}>
+                      {videoTitle || '影片标题'}
+                      {/* aka 悬浮提示 */}
+                      {doubanAka.length > 0 && (
+                        <div className='absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-800 dark:bg-gray-900 text-white text-sm rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 ease-out whitespace-nowrap z-[100] pointer-events-none'>
+                          <div className='font-semibold text-xs text-gray-400 mb-1'>又名：</div>
+                          {doubanAka.map((name, index) => (
+                            <div key={index} className='text-sm'>
+                              {name}
+                            </div>
+                          ))}
+                          <div className='absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-800 dark:border-t-gray-900'></div>
                         </div>
-                      ))}
-                      <div className='absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-800 dark:border-t-gray-900'></div>
-                    </div>
-                  )}
-                </span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleToggleFavorite();
-                  }}
-                  className='flex-shrink-0 hover:opacity-80 transition-opacity'
-                >
-                  <FavoriteIcon filled={favorited} />
-                </button>
-                {/* 网盘搜索按钮 */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowPansouDialog(true);
-                  }}
-                  className='flex-shrink-0 hover:opacity-80 transition-opacity'
-                  title='搜索网盘资源'
-                >
-                  <Cloud className='h-6 w-6 text-gray-700 dark:text-gray-300' />
-                </button>
-                {/* AI问片按钮 */}
-                {aiEnabled && detail && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowAIChat(true);
-                    }}
-                    className='flex-shrink-0 hover:opacity-80 transition-opacity'
-                    title='AI问片'
-                  >
-                    <Sparkles className='h-6 w-6 text-gray-700 dark:text-gray-300' />
-                  </button>
-                )}
-                {/* 纠错按钮 - 仅小雅源显示 */}
-                {detail && detail.source === 'xiaoya' && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowCorrectDialog(true);
-                    }}
-                    className='flex-shrink-0 hover:opacity-80 transition-opacity'
-                    title='纠错'
-                  >
-                    <AlertCircle className='h-6 w-6 text-gray-700 dark:text-gray-300' />
-                  </button>
-                )}
-                {/* 豆瓣评分显示 */}
-                {doubanRating && doubanRating.value > 0 && (
-                  <div className='flex items-center gap-2 text-base font-normal'>
-                    {/* 星级显示 */}
-                    <div className='flex items-center gap-1'>
-                      {[1, 2, 3, 4, 5].map((star) => {
-                        const starValue = doubanRating.value / 2; // 转换为5星制
-                        const isFullStar = star <= Math.floor(starValue);
-                        const isHalfStar = !isFullStar && star <= Math.ceil(starValue) && starValue % 1 >= 0.25;
-
-                        return (
-                          <div key={star} className='relative w-5 h-5'>
-                            {isFullStar ? (
-                              // 全星
-                              <svg
-                                className='w-5 h-5 text-yellow-400 fill-yellow-400'
-                                viewBox='0 0 24 24'
-                                xmlns='http://www.w3.org/2000/svg'
-                              >
-                                <path d='M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z' />
-                              </svg>
-                            ) : isHalfStar ? (
-                              // 半星
-                              <>
-                                {/* 空星背景 */}
-                                <svg
-                                  className='absolute w-5 h-5 text-gray-300 dark:text-gray-600 fill-gray-300 dark:fill-gray-600'
-                                  viewBox='0 0 24 24'
-                                  xmlns='http://www.w3.org/2000/svg'
-                                >
-                                  <path d='M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z' />
-                                </svg>
-                                {/* 半星遮罩 */}
-                                <svg
-                                  className='absolute w-5 h-5 text-yellow-400 fill-yellow-400'
-                                  viewBox='0 0 24 24'
-                                  xmlns='http://www.w3.org/2000/svg'
-                                  style={{ clipPath: 'inset(0 50% 0 0)' }}
-                                >
-                                  <path d='M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z' />
-                                </svg>
-                              </>
-                            ) : (
-                              // 空星
-                              <svg
-                                className='w-5 h-5 text-gray-300 dark:text-gray-600 fill-gray-300 dark:fill-gray-600'
-                                viewBox='0 0 24 24'
-                                xmlns='http://www.w3.org/2000/svg'
-                              >
-                                <path d='M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z' />
-                              </svg>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {/* 评分数值 */}
-                    <span className='text-gray-700 dark:text-gray-300 font-semibold'>
-                      {doubanRating.value.toFixed(1)}
+                      )}
                     </span>
-                    {/* 评分人数 */}
-                    <span className='text-gray-500 dark:text-gray-400 text-sm'>
-                      ({doubanRating.count.toLocaleString()}人评价)
-                    </span>
-                  </div>
-                )}
-              </h1>
-
-              {/* 关键信息行 */}
-              <div className={`flex flex-wrap items-center gap-3 text-base mb-4 opacity-80 flex-shrink-0 ${tmdbBackdrop ? 'text-white' : ''}`}>
-                {detail?.class && (
-                  <span className='text-green-600 font-semibold'>
-                    {detail.class}
-                  </span>
-                )}
-                {/* 优先使用 doubanYear，如果没有则使用 detail.year 或 videoYear */}
-                {(doubanYear || detail?.year || videoYear) && (
-                  <span>{doubanYear || detail?.year || videoYear}</span>
-                )}
-                {detail?.source_name && (
-                  <span className={`border px-2 py-[1px] rounded ${
-                    detail.source === 'xiaoya' ? 'border-blue-500' : detail.source === 'openlist' || detail.source === 'emby' || detail.source?.startsWith('emby_') ? 'border-yellow-500' : 'border-gray-500/60'
-                  }`}>
-                    {detail.source_name}
-                  </span>
-                )}
-                {detail?.type_name && <span>{detail.type_name}</span>}
-              </div>
-              {/* 剧情简介 */}
-              {(doubanCardSubtitle || correctedDesc || detail?.desc) && (
-                <div
-                  className={`mt-0 text-base leading-relaxed opacity-90 overflow-y-auto pr-2 flex-1 min-h-0 scrollbar-hide ${tmdbBackdrop ? 'text-white' : ''}`}
-                  style={{ whiteSpace: 'pre-line' }}
-                >
-                  {/* card_subtitle 在前，desc 在后 */}
-                  {doubanCardSubtitle && (
-                    <div className='mb-3 pb-3 border-b border-gray-300 dark:border-gray-700'>
-                      {doubanCardSubtitle}
-                    </div>
-                  )}
-                  {correctedDesc || detail?.desc}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* 封面展示 */}
-          <div className='hidden md:block md:col-span-1 md:order-first'>
-            <div className='pl-0 py-4 pr-6 max-w-sm mx-auto'>
-              <div className='relative bg-gray-300 dark:bg-gray-700 aspect-[2/3] flex items-center justify-center rounded-xl overflow-hidden'>
-                {videoCover ? (
-                  <>
-                    <img
-                      src={processImageUrl(videoCover)}
-                      alt={videoTitle}
-                      className='w-full h-full object-cover'
-                    />
-
-                    {/* 豆瓣链接按钮 */}
-                    {videoDoubanId !== 0 && (
-                      <a
-                        href={`https://movie.douban.com/subject/${videoDoubanId.toString()}`}
-                        target='_blank'
-                        rel='noopener noreferrer'
-                        className='absolute top-3 left-3'
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleFavorite();
+                      }}
+                      className='flex-shrink-0 hover:opacity-80 transition-opacity'
+                    >
+                      <FavoriteIcon filled={favorited} />
+                    </button>
+                    {/* 网盘搜索按钮 */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowPansouDialog(true);
+                      }}
+                      className='flex-shrink-0 hover:opacity-80 transition-opacity'
+                      title='搜索网盘资源'
+                    >
+                      <Cloud className='h-6 w-6 text-gray-700 dark:text-gray-300' />
+                    </button>
+                    {/* AI问片按钮 */}
+                    {aiEnabled && detail && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowAIChat(true);
+                        }}
+                        className='flex-shrink-0 hover:opacity-80 transition-opacity'
+                        title='AI问片'
                       >
-                        <div className='bg-green-500 text-white text-xs font-bold w-8 h-8 rounded-full flex items-center justify-center shadow-md hover:bg-green-600 hover:scale-[1.1] transition-all duration-300 ease-out'>
-                          <svg
-                            width='16'
-                            height='16'
-                            viewBox='0 0 24 24'
-                            fill='none'
-                            stroke='currentColor'
-                            strokeWidth='2'
-                            strokeLinecap='round'
-                            strokeLinejoin='round'
-                          >
-                            <path d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'></path>
-                            <path d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'></path>
-                          </svg>
-                        </div>
-                      </a>
+                        <Sparkles className='h-6 w-6 text-gray-700 dark:text-gray-300' />
+                      </button>
                     )}
-                  </>
-                ) : (
-                  <span className='text-gray-600 dark:text-gray-400'>
-                    封面图片
-                  </span>
-                )}
+                    {/* 纠错按钮 - 仅小雅源显示 */}
+                    {detail && detail.source === 'xiaoya' && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowCorrectDialog(true);
+                        }}
+                        className='flex-shrink-0 hover:opacity-80 transition-opacity'
+                        title='纠错'
+                      >
+                        <AlertCircle className='h-6 w-6 text-gray-700 dark:text-gray-300' />
+                      </button>
+                    )}
+                    {/* 豆瓣评分显示 */}
+                    {doubanRating && doubanRating.value > 0 && (
+                      <div className='flex items-center gap-2 text-base font-normal'>
+                        {/* 星级显示 */}
+                        <div className='flex items-center gap-1'>
+                          {[1, 2, 3, 4, 5].map((star) => {
+                            const starValue = doubanRating.value / 2; // 转换为5星制
+                            const isFullStar = star <= Math.floor(starValue);
+                            const isHalfStar = !isFullStar && star <= Math.ceil(starValue) && starValue % 1 >= 0.25;
+
+                            return (
+                              <div key={star} className='relative w-5 h-5'>
+                                {isFullStar ? (
+                                  // 全星
+                                  <svg
+                                    className='w-5 h-5 text-yellow-400 fill-yellow-400'
+                                    viewBox='0 0 24 24'
+                                    xmlns='http://www.w3.org/2000/svg'
+                                  >
+                                    <path d='M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z' />
+                                  </svg>
+                                ) : isHalfStar ? (
+                                  // 半星
+                                  <>
+                                    {/* 空星背景 */}
+                                    <svg
+                                      className='absolute w-5 h-5 text-gray-300 dark:text-gray-600 fill-gray-300 dark:fill-gray-600'
+                                      viewBox='0 0 24 24'
+                                      xmlns='http://www.w3.org/2000/svg'
+                                    >
+                                      <path d='M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z' />
+                                    </svg>
+                                    {/* 半星遮罩 */}
+                                    <svg
+                                      className='absolute w-5 h-5 text-yellow-400 fill-yellow-400'
+                                      viewBox='0 0 24 24'
+                                      xmlns='http://www.w3.org/2000/svg'
+                                      style={{ clipPath: 'inset(0 50% 0 0)' }}
+                                    >
+                                      <path d='M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z' />
+                                    </svg>
+                                  </>
+                                ) : (
+                                  // 空星
+                                  <svg
+                                    className='w-5 h-5 text-gray-300 dark:text-gray-600 fill-gray-300 dark:fill-gray-600'
+                                    viewBox='0 0 24 24'
+                                    xmlns='http://www.w3.org/2000/svg'
+                                  >
+                                    <path d='M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z' />
+                                  </svg>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {/* 评分数值 */}
+                        <span className='text-gray-700 dark:text-gray-300 font-semibold'>
+                          {doubanRating.value.toFixed(1)}
+                        </span>
+                        {/* 评分人数 */}
+                        <span className='text-gray-500 dark:text-gray-400 text-sm'>
+                          ({doubanRating.count.toLocaleString()}人评价)
+                        </span>
+                      </div>
+                    )}
+                  </h1>
+
+                  {/* 关键信息行 */}
+                  <div className={`flex flex-wrap items-center gap-3 text-base mb-4 opacity-80 flex-shrink-0 ${tmdbBackdrop ? 'text-white' : ''}`}>
+                    {detail?.class && (
+                      <span className='text-green-600 font-semibold'>
+                        {detail.class}
+                      </span>
+                    )}
+                    {/* 优先使用 doubanYear，如果没有则使用 detail.year 或 videoYear */}
+                    {(doubanYear || detail?.year || videoYear) && (
+                      <span>{doubanYear || detail?.year || videoYear}</span>
+                    )}
+                    {detail?.source_name && (
+                      <span className={`border px-2 py-[1px] rounded ${
+                        detail.source === 'xiaoya' ? 'border-blue-500' : detail.source === 'openlist' || detail.source === 'emby' || detail.source?.startsWith('emby_') ? 'border-yellow-500' : 'border-gray-500/60'
+                      }`}>
+                        {detail.source_name}
+                      </span>
+                    )}
+                    {detail?.type_name && <span>{detail.type_name}</span>}
+                  </div>
+                  {/* 剧情简介 */}
+                  {(doubanCardSubtitle || correctedDesc || detail?.desc) && (
+                    <div
+                      className={`mt-0 text-base leading-relaxed opacity-90 overflow-y-auto pr-2 flex-1 min-h-0 scrollbar-hide ${tmdbBackdrop ? 'text-white' : ''}`}
+                      style={{ whiteSpace: 'pre-line' }}
+                    >
+                      {/* card_subtitle 在前，desc 在后 */}
+                      {doubanCardSubtitle && (
+                        <div className='mb-3 pb-3 border-b border-gray-300 dark:border-gray-700'>
+                          {doubanCardSubtitle}
+                        </div>
+                      )}
+                      {correctedDesc || detail?.desc}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 封面展示 */}
+              <div className='hidden md:block md:col-span-1 md:order-first'>
+                <div className='pl-0 py-4 pr-6 max-w-sm mx-auto'>
+                  <div className='relative bg-gray-300 dark:bg-gray-700 aspect-[2/3] flex items-center justify-center rounded-xl overflow-hidden'>
+                    {videoCover ? (
+                      <>
+                        <img
+                          src={processImageUrl(videoCover)}
+                          alt={videoTitle}
+                          className='w-full h-full object-cover'
+                        />
+
+                        {/* 豆瓣链接按钮 */}
+                        {videoDoubanId !== 0 && (
+                          <a
+                            href={`https://movie.douban.com/subject/${videoDoubanId.toString()}`}
+                            target='_blank'
+                            rel='noopener noreferrer'
+                            className='absolute top-3 left-3'
+                          >
+                            <div className='bg-green-500 text-white text-xs font-bold w-8 h-8 rounded-full flex items-center justify-center shadow-md hover:bg-green-600 hover:scale-[1.1] transition-all duration-300 ease-out'>
+                              <svg
+                                width='16'
+                                height='16'
+                                viewBox='0 0 24 24'
+                                fill='none'
+                                stroke='currentColor'
+                                strokeWidth='2'
+                                strokeLinecap='round'
+                                strokeLinejoin='round'
+                              >
+                                <path d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'></path>
+                                <path d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'></path>
+                              </svg>
+                            </div>
+                          </a>
+                        )}
+                      </>
+                    ) : (
+                      <span className='text-gray-600 dark:text-gray-400'>
+                        封面图片
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
 
-        {/* 推荐区域 */}
-        <SmartRecommendations
-          doubanId={videoDoubanId !== 0 ? videoDoubanId : undefined}
-          videoTitle={videoTitle}
-        />
+            {/* 推荐区域 */}
+            <SmartRecommendations
+              doubanId={videoDoubanId !== 0 ? videoDoubanId : undefined}
+              videoTitle={videoTitle}
+            />
 
-        {/* 豆瓣评论区域 */}
-        {videoDoubanId !== 0 && enableComments && (
-          <div className='mt-6 -mx-3 md:mx-0 md:px-4'>
-            <div className='bg-white/50 dark:bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-200/50 dark:border-gray-700/50 overflow-hidden'>
-              {/* 标题 */}
-              <div className='px-3 md:px-6 py-4 border-b border-gray-200 dark:border-gray-700'>
-                <h3 className='text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2'>
-                  <svg className='w-5 h-5' fill='currentColor' viewBox='0 0 24 24'>
-                    <path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z'/>
-                  </svg>
-                  豆瓣评论
-                </h3>
+            {/* 豆瓣评论区域 */}
+            {videoDoubanId !== 0 && enableComments && (
+              <div className='mt-6 -mx-3 md:mx-0 md:px-4'>
+                <div className='bg-white/50 dark:bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-200/50 dark:border-gray-700/50 overflow-hidden'>
+                  {/* 标题 */}
+                  <div className='px-3 md:px-6 py-4 border-b border-gray-200 dark:border-gray-700'>
+                    <h3 className='text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2'>
+                      <svg className='w-5 h-5' fill='currentColor' viewBox='0 0 24 24'>
+                        <path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z'/>
+                      </svg>
+                      豆瓣评论
+                    </h3>
+                  </div>
+
+                  {/* 评论内容 */}
+                  <div className='p-3 md:p-6'>
+                    <DoubanComments doubanId={videoDoubanId} />
+                  </div>
+                </div>
               </div>
-
-              {/* 评论内容 */}
-              <div className='p-3 md:p-6'>
-                <DoubanComments doubanId={videoDoubanId} />
-              </div>
-            </div>
-          </div>
+            )}
+          </>
         )}
       </div>
 

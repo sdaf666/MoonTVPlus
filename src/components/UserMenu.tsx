@@ -174,6 +174,8 @@ export const UserMenu: React.FC = () => {
   ];
 
   const [homeModules, setHomeModules] = useState<HomeModule[]>(defaultHomeModules);
+  const [homeBannerEnabled, setHomeBannerEnabled] = useState(true);
+  const [homeContinueWatchingEnabled, setHomeContinueWatchingEnabled] = useState(true);
 
   // 豆瓣数据源选项
   const doubanDataSourceOptions = [
@@ -441,6 +443,16 @@ export const UserMenu: React.FC = () => {
       const savedDanmakuHeatmapDisabled = localStorage.getItem('danmaku_heatmap_disabled');
       if (savedDanmakuHeatmapDisabled !== null) {
         setDanmakuHeatmapDisabled(savedDanmakuHeatmapDisabled === 'true');
+      }
+
+      const savedHomeBannerEnabled = localStorage.getItem('homeBannerEnabled');
+      if (savedHomeBannerEnabled !== null) {
+        setHomeBannerEnabled(savedHomeBannerEnabled === 'true');
+      }
+
+      const savedHomeContinueWatchingEnabled = localStorage.getItem('homeContinueWatchingEnabled');
+      if (savedHomeContinueWatchingEnabled !== null) {
+        setHomeContinueWatchingEnabled(savedHomeContinueWatchingEnabled === 'true');
       }
 
       // 加载首页模块配置
@@ -917,6 +929,22 @@ export const UserMenu: React.FC = () => {
     }
   };
 
+  const handleHomeBannerToggle = (value: boolean) => {
+    setHomeBannerEnabled(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('homeBannerEnabled', String(value));
+      window.dispatchEvent(new CustomEvent('homeModulesUpdated'));
+    }
+  };
+
+  const handleHomeContinueWatchingToggle = (value: boolean) => {
+    setHomeContinueWatchingEnabled(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('homeContinueWatchingEnabled', String(value));
+      window.dispatchEvent(new CustomEvent('homeModulesUpdated'));
+    }
+  };
+
   // 首页模块配置处理函数
   const handleHomeModuleToggle = (id: string, enabled: boolean) => {
     const updatedModules = homeModules.map(module =>
@@ -1010,6 +1038,8 @@ export const UserMenu: React.FC = () => {
     setNextEpisodePreCache(true);
     setNextEpisodeDanmakuPreload(true);
     setDisableAutoLoadDanmaku(false);
+    setHomeBannerEnabled(true);
+    setHomeContinueWatchingEnabled(true);
     setHomeModules(defaultHomeModules);
     setSearchTraditionalToSimplified(false);
 
@@ -1031,6 +1061,8 @@ export const UserMenu: React.FC = () => {
       localStorage.setItem('disableAutoLoadDanmaku', 'false');
       localStorage.setItem('danmakuMaxCount', '0');
       localStorage.setItem('danmaku_heatmap_disabled', 'false');
+      localStorage.setItem('homeBannerEnabled', 'true');
+      localStorage.setItem('homeContinueWatchingEnabled', 'true');
       localStorage.setItem('homeModules', JSON.stringify(defaultHomeModules));
       localStorage.setItem('searchTraditionalToSimplified', 'false');
       window.dispatchEvent(new CustomEvent('homeModulesUpdated'));
@@ -2189,6 +2221,55 @@ export const UserMenu: React.FC = () => {
                     </p>
                   </div>
 
+                  {/* 首页顶部组件显示 */}
+                  <div className='space-y-2'>
+                    <div className='flex items-center gap-2 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700'>
+                      <button
+                        onClick={() => handleHomeBannerToggle(!homeBannerEnabled)}
+                        className='flex-shrink-0'
+                        title={homeBannerEnabled ? '点击隐藏' : '点击显示'}
+                      >
+                        {homeBannerEnabled ? (
+                          <Eye className='w-5 h-5 text-green-600 dark:text-green-400' />
+                        ) : (
+                          <EyeOff className='w-5 h-5 text-gray-400 dark:text-gray-500' />
+                        )}
+                      </button>
+                      <div className='flex-1'>
+                        <span className={`text-sm font-medium ${
+                          homeBannerEnabled
+                            ? 'text-gray-900 dark:text-gray-100'
+                            : 'text-gray-400 dark:text-gray-500'
+                        }`}>
+                          首页轮播图
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className='flex items-center gap-2 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700'>
+                      <button
+                        onClick={() => handleHomeContinueWatchingToggle(!homeContinueWatchingEnabled)}
+                        className='flex-shrink-0'
+                        title={homeContinueWatchingEnabled ? '点击隐藏' : '点击显示'}
+                      >
+                        {homeContinueWatchingEnabled ? (
+                          <Eye className='w-5 h-5 text-green-600 dark:text-green-400' />
+                        ) : (
+                          <EyeOff className='w-5 h-5 text-gray-400 dark:text-gray-500' />
+                        )}
+                      </button>
+                      <div className='flex-1'>
+                        <span className={`text-sm font-medium ${
+                          homeContinueWatchingEnabled
+                            ? 'text-gray-900 dark:text-gray-100'
+                            : 'text-gray-400 dark:text-gray-500'
+                        }`}>
+                          继续观看
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* 模块列表 */}
                   <div className='space-y-2'>
                     {homeModules.map((module, index) => (
@@ -2247,8 +2328,12 @@ export const UserMenu: React.FC = () => {
                   <button
                     onClick={() => {
                       setHomeModules(defaultHomeModules);
+                      setHomeBannerEnabled(true);
+                      setHomeContinueWatchingEnabled(true);
                       if (typeof window !== 'undefined') {
                         localStorage.setItem('homeModules', JSON.stringify(defaultHomeModules));
+                        localStorage.setItem('homeBannerEnabled', 'true');
+                        localStorage.setItem('homeContinueWatchingEnabled', 'true');
                         window.dispatchEvent(new CustomEvent('homeModulesUpdated'));
                       }
                     }}

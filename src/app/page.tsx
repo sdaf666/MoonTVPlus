@@ -2,8 +2,9 @@
 
 'use client';
 
-import { Bot, ChevronRight, ListVideo } from 'lucide-react';
+import { Bot, ChevronRight, Link as LinkIcon, ListVideo } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 
 import {
@@ -13,7 +14,7 @@ import {
 import { getDoubanCategories } from '@/lib/douban.client';
 import { getTMDBImageUrl, TMDBItem } from '@/lib/tmdb.client';
 import { DoubanItem } from '@/lib/types';
-import { processImageUrl } from '@/lib/utils';
+import { base58Encode, processImageUrl } from '@/lib/utils';
 
 import AIChatPanel from '@/components/AIChatPanel';
 import BannerCarousel from '@/components/BannerCarousel';
@@ -45,6 +46,7 @@ function HomeClient() {
   >([]);
   const [loading, setLoading] = useState(true);
   const { announcement } = useSite();
+  const router = useRouter();
 
   // 首页模块配置状态
   const [homeModules, setHomeModules] = useState<HomeModule[]>([
@@ -55,6 +57,8 @@ function HomeClient() {
     { id: 'hotVarietyShows', name: '热门综艺', enabled: true, order: 4 },
     { id: 'upcomingContent', name: '即将上映', enabled: true, order: 5 },
   ]);
+  const [homeBannerEnabled, setHomeBannerEnabled] = useState(true);
+  const [homeContinueWatchingEnabled, setHomeContinueWatchingEnabled] = useState(true);
 
   const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [showHttpWarning, setShowHttpWarning] = useState(true);
@@ -62,34 +66,56 @@ function HomeClient() {
   const [aiEnabled, setAiEnabled] = useState(false);
   const [aiDefaultMessageNoVideo, setAiDefaultMessageNoVideo] = useState('你好！我是MoonTVPlus的AI影视助手。想看什么电影或剧集？需要推荐吗？');
   const [sourceSearchEnabled, setSourceSearchEnabled] = useState(true);
+  const [showDirectPlayDialog, setShowDirectPlayDialog] = useState(false);
+  const [directPlayUrl, setDirectPlayUrl] = useState('');
+
+  const handleDirectPlay = () => {
+    setDirectPlayUrl('');
+    setShowDirectPlayDialog(true);
+  };
+
+  const submitDirectPlay = () => {
+    const trimmed = directPlayUrl.trim();
+    if (!trimmed) return;
+    const encoded = base58Encode(trimmed);
+    if (!encoded) return;
+    setShowDirectPlayDialog(false);
+    setDirectPlayUrl('');
+    router.push(`/play?source=directplay&id=${encodeURIComponent(encoded)}`);
+  };
+
+  const loadHomeLayoutSettings = () => {
+    if (typeof window === 'undefined') return;
+
+    const savedHomeModules = localStorage.getItem('homeModules');
+    if (savedHomeModules) {
+      try {
+        setHomeModules(JSON.parse(savedHomeModules));
+      } catch (error) {
+        console.error('解析首页模块配置失败:', error);
+      }
+    }
+
+    const savedHomeBannerEnabled = localStorage.getItem('homeBannerEnabled');
+    if (savedHomeBannerEnabled !== null) {
+      setHomeBannerEnabled(savedHomeBannerEnabled === 'true');
+    }
+
+    const savedHomeContinueWatchingEnabled = localStorage.getItem('homeContinueWatchingEnabled');
+    if (savedHomeContinueWatchingEnabled !== null) {
+      setHomeContinueWatchingEnabled(savedHomeContinueWatchingEnabled === 'true');
+    }
+  };
 
   // 加载首页模块配置
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedHomeModules = localStorage.getItem('homeModules');
-      if (savedHomeModules) {
-        try {
-          setHomeModules(JSON.parse(savedHomeModules));
-        } catch (error) {
-          console.error('解析首页模块配置失败:', error);
-        }
-      }
-    }
+    loadHomeLayoutSettings();
   }, []);
 
   // 监听首页模块配置更新事件
   useEffect(() => {
     const handleHomeModulesUpdated = () => {
-      if (typeof window !== 'undefined') {
-        const savedHomeModules = localStorage.getItem('homeModules');
-        if (savedHomeModules) {
-          try {
-            setHomeModules(JSON.parse(savedHomeModules));
-          } catch (error) {
-            console.error('解析首页模块配置失败:', error);
-          }
-        }
-      }
+      loadHomeLayoutSettings();
     };
 
     window.addEventListener('homeModulesUpdated', handleHomeModulesUpdated);
@@ -547,16 +573,26 @@ function HomeClient() {
     <PageLayout>
       <FireworksCanvas />
       {/* TMDB 热门轮播图 */}
-      <div className='w-full mb-4'>
-        <BannerCarousel />
-      </div>
+      {homeBannerEnabled && (
+        <div className='w-full mb-4'>
+          <BannerCarousel />
+        </div>
+      )}
 
       <div className='px-2 sm:px-10 pb-4 sm:pb-8 overflow-visible'>
         <div className='max-w-[95%] mx-auto'>
           {/* 首页内容 */}
           <>
             {/* 源站寻片和AI问片入口 */}
-            <div className='flex items-center justify-end gap-2 mb-4'>
+            <div className={`flex items-center justify-end gap-2 mb-4 ${homeBannerEnabled ? '' : 'mt-[30px]'}`}>
+              <button
+                onClick={handleDirectPlay}
+                className='p-1.5 rounded-lg text-blue-500 hover:text-blue-600 transition-colors'
+                title='直链播放'
+              >
+                <LinkIcon size={18} />
+              </button>
+
               {/* 源站寻片入口 */}
               {sourceSearchEnabled && (
                 <Link href='/source-search'>
@@ -582,7 +618,7 @@ function HomeClient() {
             </div>
 
             {/* 继续观看 */}
-            <ContinueWatching />
+            {homeContinueWatchingEnabled && <ContinueWatching />}
 
             {/* 根据配置动态渲染首页模块 */}
             {homeModules
@@ -623,6 +659,62 @@ function HomeClient() {
             >
               知道了
             </button>
+          </div>
+        </div>
+      )}
+
+      {showDirectPlayDialog && (
+        <div
+          className='fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4'
+          onClick={() => setShowDirectPlayDialog(false)}
+        >
+          <div
+            className='bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-lg'
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className='flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700'>
+              <h3 className='text-lg font-semibold text-gray-900 dark:text-gray-100'>
+                直链播放
+              </h3>
+              <button
+                onClick={() => setShowDirectPlayDialog(false)}
+                className='p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors'
+                aria-label='关闭'
+              >
+                <span className='text-gray-600 dark:text-gray-400'>×</span>
+              </button>
+            </div>
+            <div className='p-4 space-y-4'>
+              <div className='text-sm text-gray-600 dark:text-gray-300'>
+                请输入可直接播放的视频链接。
+              </div>
+              <input
+                value={directPlayUrl}
+                onChange={(event) => setDirectPlayUrl(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    submitDirectPlay();
+                  }
+                }}
+                placeholder='https://example.com/video.m3u8'
+                className='w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500'
+              />
+              <div className='flex justify-end gap-2'>
+                <button
+                  onClick={() => setShowDirectPlayDialog(false)}
+                  className='px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors'
+                >
+                  取消
+                </button>
+                <button
+                  onClick={submitDirectPlay}
+                  disabled={!directPlayUrl.trim()}
+                  className='px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
+                >
+                  开始播放
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

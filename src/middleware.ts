@@ -3,7 +3,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { refreshAccessToken, shouldRenewToken } from '@/lib/middleware-auth';
 import { TOKEN_CONFIG } from '@/lib/refresh-token';
 
 export async function middleware(request: NextRequest) {
@@ -54,37 +53,9 @@ export async function middleware(request: NextRequest) {
   const now = Date.now();
   const age = now - authInfo.timestamp;
 
-  // Access Token 已过期，尝试使用 Refresh Token 刷新
+  // Access Token 已过期，前端负责刷新
   if (age > ACCESS_TOKEN_AGE) {
-    if (authInfo.refreshToken && authInfo.tokenId && authInfo.refreshExpires) {
-      // 检查 Refresh Token 是否过期
-      if (now < authInfo.refreshExpires) {
-        // 尝试刷新 Access Token
-        const newAuthData = await refreshAccessToken(
-          authInfo.username,
-          authInfo.role,
-          authInfo.tokenId,
-          authInfo.refreshToken,
-          authInfo.refreshExpires
-        );
-
-        if (newAuthData) {
-          // 刷新成功，设置新 Cookie
-          const response = NextResponse.next();
-          const expires = new Date(authInfo.refreshExpires);
-          response.cookies.set('auth', newAuthData, {
-            path: '/',
-            expires,
-            sameSite: 'lax',
-            httpOnly: false,
-            secure: false,
-          });
-          return response;
-        }
-      }
-    }
-
-    // Refresh Token 也过期或刷新失败，需要重新登录
+    console.log(`Access token expired for ${authInfo.username}, redirecting to login`);
     return handleAuthFailure(request, pathname);
   }
 
@@ -101,34 +72,8 @@ export async function middleware(request: NextRequest) {
     return handleAuthFailure(request, pathname);
   }
 
-  // 签名验证通过，检查是否需要续期
-  if (shouldRenewToken(authInfo.timestamp)) {
-    // 快过期了，自动续期
-    if (authInfo.refreshToken && authInfo.tokenId && authInfo.refreshExpires) {
-      const newAuthData = await refreshAccessToken(
-        authInfo.username,
-        authInfo.role,
-        authInfo.tokenId,
-        authInfo.refreshToken,
-        authInfo.refreshExpires
-      );
-
-      if (newAuthData) {
-        const response = NextResponse.next();
-        const expires = new Date(authInfo.refreshExpires);
-        response.cookies.set('auth', newAuthData, {
-          path: '/',
-          expires,
-          sameSite: 'lax',
-          httpOnly: false,
-          secure: false,
-        });
-        return response;
-      }
-    }
-  }
-
-  // 正常通过
+  // 签名验证通过
+  // 注意：Token 续期由前端负责，Middleware 不再自动刷新
   return NextResponse.next();
 }
 
@@ -215,6 +160,6 @@ function shouldSkipAuth(pathname: string): boolean {
 // 配置middleware匹配规则
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|login|register|oidc-register|warning|api/login|api/register|api/logout|api/auth/oidc|api/cron/|api/server-config|api/proxy-m3u8|api/cms-proxy|api/tvbox/subscribe|api/theme/css|api/openlist/cms-proxy|api/openlist/play|api/emby/cms-proxy|api/emby/play|api/emby/sources).*)',
+    '/((?!_next/static|_next/image|favicon.ico|login|register|oidc-register|warning|api/login|api/register|api/logout|api/auth/oidc|api/auth/refresh|api/cron/|api/server-config|api/proxy-m3u8|api/cms-proxy|api/tvbox/subscribe|api/theme/css|api/openlist/cms-proxy|api/openlist/play|api/emby/cms-proxy|api/emby/play|api/emby/sources).*)',
   ],
 };
